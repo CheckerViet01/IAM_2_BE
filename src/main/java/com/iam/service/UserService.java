@@ -121,6 +121,10 @@ public class UserService {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
 
+        if ("admin".equalsIgnoreCase(user.getUsername())) {
+            throw new AppException(ErrorCode.UNAUTHORIZED, "Không thể xóa tài khoản Quản trị viên tối cao (admin)!");
+        }
+
         // Xóa mềm trong DB nội bộ của IAM
         userRepository.delete(user);
 
@@ -136,6 +140,10 @@ public class UserService {
     public UserResponse lockUser(Long id, boolean locked) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+
+        if ("admin".equalsIgnoreCase(user.getUsername()) && locked) {
+            throw new AppException(ErrorCode.UNAUTHORIZED, "Không thể khóa tài khoản Quản trị viên tối cao (admin)!");
+        }
 
         user.setLocked(locked);
         User saved = userRepository.save(user);

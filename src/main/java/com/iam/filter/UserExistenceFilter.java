@@ -39,7 +39,9 @@ import java.util.Set;
 public class UserExistenceFilter extends OncePerRequestFilter {
 
     private final UserRepository userRepository;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+            .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
