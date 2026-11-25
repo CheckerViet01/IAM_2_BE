@@ -110,6 +110,21 @@ public class KeycloakAdminService {
                 String path = response.getLocation().getPath();
                 String userId = path.replaceAll(".*/([^/]+)$", "$1");
                 log.info("Successfully created Keycloak user: username={}, keycloakId={}", username, userId);
+
+                // Kích hoạt mật khẩu trực tiếp trên Keycloak đảm bảo 100% mật khẩu hoạt động
+                if (password != null && !password.isBlank()) {
+                    try {
+                        CredentialRepresentation credential = new CredentialRepresentation();
+                        credential.setType(CredentialRepresentation.PASSWORD);
+                        credential.setValue(password);
+                        credential.setTemporary(false);
+                        usersResource.get(userId).resetPassword(credential);
+                        log.info("Activated permanent password on Keycloak for userId={}", userId);
+                    } catch (Exception credEx) {
+                        log.warn("Failed to reset password right after creation: {}", credEx.getMessage());
+                    }
+                }
+
                 return userId;
             } else if (status == 409) {
                 throw new AppException(ErrorCode.USER_EXISTED, "User đã tồn tại trên Keycloak");
