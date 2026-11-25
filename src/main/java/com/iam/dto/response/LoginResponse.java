@@ -3,6 +3,8 @@ package com.iam.dto.response;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.*;
 
+import java.util.Map;
+
 @Getter
 @Setter
 @NoArgsConstructor
@@ -19,4 +21,5 @@ public class LoginResponse {
     private String tokenType;
     private Long expiresIn;
     private String username;
+    private Map<String, Object> user;
 }

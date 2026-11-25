@@ -6,6 +6,7 @@ import com.iam.dto.request.RefreshTokenRequest;
 import com.iam.dto.request.RegisterRequest;
 import com.iam.dto.response.LoginResponse;
 import com.iam.dto.response.TokenResponse;
+import com.iam.entity.Permission;
 import com.iam.entity.Role;
 import com.iam.entity.User;
 import com.iam.exception.AppException;
@@ -20,9 +21,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @ConditionalOnProperty(name = "app.idp.provider", havingValue = "keycloak", matchIfMissing = true)
@@ -38,10 +38,48 @@ public class KeycloakAuthServiceImpl implements AuthService {
     public LoginResponse login(LoginRequest request) {
         log.info("Processing login in KEYCLOAK mode");
 
-        // Nếu client cung cấp username & password trực tiếp -> Đăng nhập lấy Bearer token ngay
-        if (request != null && request.getUsername() != null && !request.getUsername().isBlank()
-                && request.getPassword() != null && !request.getPassword().isBlank()) {
-            TokenResponse tokenResponse = keycloakAdminService.loginDirect(request.getUsername(), request.getPassword());
+        String target = request != null ? request.getUsernameOrEmail() : null;
+
+        // Nếu client cung cấp username/email & password -> Đăng nhập lấy Bearer token trực tiếp
+        if (target != null && !target.isBlank() && request.getPassword() != null && !request.getPassword().isBlank()) {
+            TokenResponse tokenResponse = keycloakAdminService.loginDirect(target, request.getPassword());
+
+            // Tìm thông tin User trong DB nội bộ của IAM
+            Optional<User> userOpt = userRepository.findByUsername(target)
+                    .or(() -> userRepository.findByEmail(target));
+
+            Map<String, Object> userProfile = new HashMap<>();
+            if (userOpt.isPresent()) {
+                User u = userOpt.get();
+                userProfile.put("id", u.getId());
+                userProfile.put("username", u.getUsername());
+                userProfile.put("email", u.getEmail());
+                userProfile.put("fullName", u.getFullName() != null ? u.getFullName() : u.getUsername());
+                userProfile.put("isActive", u.isEnabled() && !u.isDeleted());
+                userProfile.put("isLocked", u.isLocked());
+                List<String> roles = u.getRoles() != null
+                        ? u.getRoles().stream().map(Role::getCode).collect(Collectors.toList())
+                        : List.of("USER");
+                userProfile.put("roles", roles);
+
+                Set<String> perms = u.getRoles() != null
+                        ? u.getRoles().stream()
+                            .filter(r -> r.getPermissions() != null)
+                            .flatMap(r -> r.getPermissions().stream().map(Permission::getCode))
+                            .collect(Collectors.toSet())
+                        : Set.of();
+                userProfile.put("permissions", perms);
+            } else {
+                userProfile.put("id", 1);
+                userProfile.put("username", target);
+                userProfile.put("email", target);
+                userProfile.put("fullName", target);
+                userProfile.put("isActive", true);
+                userProfile.put("isLocked", false);
+                userProfile.put("roles", List.of("USER"));
+                userProfile.put("permissions", List.of());
+            }
+
             return LoginResponse.builder()
                     .message("Đăng nhập Keycloak thành công!")
                     .provider("KEYCLOAK")
@@ -49,7 +87,8 @@ public class KeycloakAuthServiceImpl implements AuthService {
                     .refreshToken(tokenResponse.getRefreshToken())
                     .tokenType(tokenResponse.getTokenType())
                     .expiresIn(tokenResponse.getExpiresIn())
-                    .username(request.getUsername())
+                    .username(target)
+                    .user(userProfile)
                     .build();
         }
 
@@ -64,15 +103,16 @@ public class KeycloakAuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public LoginResponse register(RegisterRequest request) {
-        log.info("Processing register in KEYCLOAK mode for username={}, email={}", request.getUsername(), request.getEmail());
+        String effectiveUsername = request.getEffectiveUsername();
+        log.info("Processing register in KEYCLOAK mode for username={}, email={}", effectiveUsername, request.getEmail());
 
-        if (userRepository.existsByUsername(request.getUsername()) || userRepository.existsByEmail(request.getEmail())) {
+        if (userRepository.existsByUsername(effectiveUsername) || userRepository.existsByEmail(request.getEmail())) {
             throw new AppException(ErrorCode.USER_EXISTED);
         }
 
         // 1. Tạo tài khoản trên Keycloak
         String keycloakId = keycloakAdminService.createUser(
-                request.getUsername().trim(),
+                effectiveUsername,
                 request.getEmail().trim(),
                 request.getPassword(),
                 request.getFullName()
@@ -84,7 +124,7 @@ public class KeycloakAuthServiceImpl implements AuthService {
         defaultRole.ifPresent(roles::add);
 
         User user = User.builder()
-                .username(request.getUsername().trim())
+                .username(effectiveUsername)
                 .email(request.getEmail().trim())
                 .fullName(request.getFullName())
                 .phoneNumber(request.getPhoneNumber())

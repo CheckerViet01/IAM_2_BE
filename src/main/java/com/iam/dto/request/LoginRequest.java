@@ -9,8 +9,13 @@ import lombok.*;
 @Builder
 public class LoginRequest {
 
-    // Cho phép để trống khi người dùng chỉ gọi /login để lấy link đăng nhập Keycloak
     private String username;
-
+    private String email;
     private String password;
+
+    public String getUsernameOrEmail() {
+        if (username != null && !username.isBlank()) return username.trim();
+        if (email != null && !email.isBlank()) return email.trim();
+        return null;
+    }
 }

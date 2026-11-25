@@ -12,8 +12,6 @@ import lombok.*;
 @Builder
 public class RegisterRequest {
 
-    @NotBlank(message = "Tên đăng nhập không được để trống")
-    @Size(min = 3, max = 50, message = "Tên đăng nhập từ 3 đến 50 ký tự")
     private String username;
 
     @NotBlank(message = "Email không được để trống")
@@ -27,4 +25,14 @@ public class RegisterRequest {
     private String fullName;
 
     private String phoneNumber;
+
+    public String getEffectiveUsername() {
+        if (username != null && !username.isBlank()) {
+            return username.trim();
+        }
+        if (email != null && !email.isBlank()) {
+            return email.trim();
+        }
+        return "user_" + System.currentTimeMillis();
+    }
 }

@@ -6,6 +6,7 @@ import com.iam.dto.request.RefreshTokenRequest;
 import com.iam.dto.request.RegisterRequest;
 import com.iam.dto.response.LoginResponse;
 import com.iam.dto.response.TokenResponse;
+import com.iam.entity.Permission;
 import com.iam.entity.RefreshToken;
 import com.iam.entity.Role;
 import com.iam.entity.User;
@@ -29,9 +30,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashSet;
-import java.util.Optional;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @ConditionalOnProperty(name = "app.idp.provider", havingValue = "self")
@@ -49,14 +49,15 @@ public class SelfAuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        log.info("Processing login in SELF-IDP mode for user={}", request.getUsername());
+        String target = request != null ? request.getUsernameOrEmail() : null;
+        log.info("Processing login in SELF-IDP mode for user={}", target);
 
-        if (request.getUsername() == null || request.getPassword() == null) {
-            throw new AppException(ErrorCode.INVALID_CREDENTIALS, "Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu");
+        if (target == null || request.getPassword() == null) {
+            throw new AppException(ErrorCode.INVALID_CREDENTIALS, "Vui lòng nhập đầy đủ tên đăng nhập/email và mật khẩu");
         }
 
         Authentication authentication = authenticationManager.authenticate(
-                new UsernamePasswordAuthenticationToken(request.getUsername().trim(), request.getPassword())
+                new UsernamePasswordAuthenticationToken(target, request.getPassword())
         );
 
         SecurityContextHolder.getContext().setAuthentication(authentication);
@@ -81,6 +82,26 @@ public class SelfAuthServiceImpl implements AuthService {
                 .build();
         refreshTokenRepository.save(refreshToken);
 
+        Map<String, Object> userProfile = new HashMap<>();
+        userProfile.put("id", user.getId());
+        userProfile.put("username", user.getUsername());
+        userProfile.put("email", user.getEmail());
+        userProfile.put("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername());
+        userProfile.put("isActive", user.isEnabled() && !user.isDeleted());
+        userProfile.put("isLocked", user.isLocked());
+        List<String> roles = user.getRoles() != null
+                ? user.getRoles().stream().map(Role::getCode).collect(Collectors.toList())
+                : List.of("USER");
+        userProfile.put("roles", roles);
+
+        Set<String> perms = user.getRoles() != null
+                ? user.getRoles().stream()
+                    .filter(r -> r.getPermissions() != null)
+                    .flatMap(r -> r.getPermissions().stream().map(Permission::getCode))
+                    .collect(Collectors.toSet())
+                : Set.of();
+        userProfile.put("permissions", perms);
+
         return LoginResponse.builder()
                 .message("Đăng nhập thành công qua Self-IDP!")
                 .provider("SELF")
@@ -89,15 +110,17 @@ public class SelfAuthServiceImpl implements AuthService {
                 .tokenType("Bearer")
                 .expiresIn(jwtTokenProvider.getJwtExpirationInMs() / 1000)
                 .username(user.getUsername())
+                .user(userProfile)
                 .build();
     }
 
     @Override
     @Transactional
     public LoginResponse register(RegisterRequest request) {
-        log.info("Processing register in SELF-IDP mode for user={}", request.getUsername());
+        String effectiveUsername = request.getEffectiveUsername();
+        log.info("Processing register in SELF-IDP mode for user={}", effectiveUsername);
 
-        if (userRepository.existsByUsername(request.getUsername()) || userRepository.existsByEmail(request.getEmail())) {
+        if (userRepository.existsByUsername(effectiveUsername) || userRepository.existsByEmail(request.getEmail())) {
             throw new AppException(ErrorCode.USER_EXISTED);
         }
 
@@ -106,7 +129,7 @@ public class SelfAuthServiceImpl implements AuthService {
         defaultRole.ifPresent(roles::add);
 
         User user = User.builder()
-                .username(request.getUsername().trim())
+                .username(effectiveUsername)
                 .email(request.getEmail().trim())
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
                 .fullName(request.getFullName())
