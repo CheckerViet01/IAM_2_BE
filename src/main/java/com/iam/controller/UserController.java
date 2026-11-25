@@ -4,6 +4,10 @@ import com.iam.dto.request.*;
 import com.iam.dto.response.ApiResponse;
 import com.iam.dto.response.PageResponse;
 import com.iam.dto.response.UserResponse;
+import com.iam.entity.User;
+import com.iam.exception.AppException;
+import com.iam.exception.ErrorCode;
+import com.iam.repository.UserRepository;
 import com.iam.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -15,13 +19,61 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 @RestController
-@RequestMapping("/api/users")
+@RequestMapping({"/api/users", "/api/v1/users"})
 @RequiredArgsConstructor
 @Tag(name = "Quản lý Người dùng (Users)", description = "Các API Quản lý tài khoản người dùng, phân quyền, khóa và reset mật khẩu")
 public class UserController {
 
     private final UserService userService;
+    private final UserRepository userRepository;
+
+    @GetMapping("/profile")
+    @Operation(summary = "Lấy thông tin tài khoản đang đăng nhập")
+    public ApiResponse<Map<String, Object>> getProfile(Authentication authentication) {
+        if (authentication == null) {
+            throw new AppException(ErrorCode.UNAUTHENTICATED);
+        }
+        String principal = authentication.getName();
+        User user = userRepository.findByUsername(principal)
+                .or(() -> userRepository.findByEmail(principal))
+                .or(() -> userRepository.findByKeycloakId(principal))
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+
+        Map<String, Object> profile = new HashMap<>();
+        profile.put("id", user.getId());
+        profile.put("username", user.getUsername());
+        profile.put("email", user.getEmail());
+        profile.put("fullName", user.getFullName());
+        profile.put("phoneNumber", user.getPhoneNumber());
+        profile.put("avatarUrl", user.getAvatarUrl());
+        profile.put("authProvider", user.getAuthProvider());
+        profile.put("isActive", user.isEnabled() && !user.isDeleted());
+        profile.put("isLocked", user.isLocked());
+        profile.put("deleted", user.isDeleted());
+        profile.put("createdAt", user.getCreatedAt());
+
+        List<String> roleCodes = user.getRoles() != null
+                ? user.getRoles().stream().map(r -> r.getCode()).collect(Collectors.toList())
+                : List.of();
+        profile.put("roles", roleCodes);
+
+        Set<String> permissions = user.getRoles() != null
+                ? user.getRoles().stream()
+                    .filter(r -> r.getPermissions() != null)
+                    .flatMap(r -> r.getPermissions().stream().map(p -> p.getCode()))
+                    .collect(Collectors.toSet())
+                : Set.of();
+        profile.put("permissions", permissions);
+
+        return ApiResponse.ok(profile);
+    }
 
     @GetMapping
     @PreAuthorize("hasPermission('USER', 'READ')")
@@ -73,6 +125,16 @@ public class UserController {
         return ApiResponse.ok(msg, userService.lockUser(id, locked));
     }
 
+    @PutMapping("/{id}/status")
+    @PreAuthorize("hasPermission('USER', 'LOCK')")
+    @Operation(summary = "Cập nhật trạng thái khóa/mở khóa cho Frontend")
+    public ApiResponse<UserResponse> updateStatus(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        boolean locked = body.containsKey("locked") ? Boolean.parseBoolean(body.get("locked").toString()) : false;
+        return ApiResponse.ok("Cập nhật trạng thái thành công", userService.lockUser(id, locked));
+    }
+
     @PostMapping("/{id}/reset-password")
     @PreAuthorize("hasPermission('USER', 'RESET_PASSWORD')")
     @Operation(summary = "Reset mật khẩu cho người dùng (Đồng bộ sang Keycloak)")
@@ -90,6 +152,19 @@ public class UserController {
             @PathVariable Long id,
             @Valid @RequestBody AssignRolesRequest request) {
         return ApiResponse.ok("Gán vai trò cho người dùng thành công", userService.assignRoles(id, request));
+    }
+
+    @PutMapping("/{id}/roles")
+    @PreAuthorize("hasPermission('USER', 'ASSIGN_ROLE')")
+    @Operation(summary = "Gán vai trò cho người dùng (Hỗ trợ định dạng body của Frontend)")
+    public ApiResponse<UserResponse> assignRolesPut(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        List<String> roles = (List<String>) body.get("roles");
+        AssignRolesRequest req = AssignRolesRequest.builder()
+                .roleCodes(roles != null ? Set.copyOf(roles) : Set.of())
+                .build();
+        return ApiResponse.ok("Gán vai trò cho người dùng thành công", userService.assignRoles(id, req));
     }
 
     @PostMapping("/change-password")

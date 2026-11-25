@@ -15,7 +15,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/permissions")
+@RequestMapping({"/api/permissions", "/api/v1/permissions"})
 @RequiredArgsConstructor
 @Tag(name = "Phân quyền - Quyền (Permissions)", description = "Các API CRUD quản lý quyền trong hệ thống RBAC")
 public class PermissionController {
