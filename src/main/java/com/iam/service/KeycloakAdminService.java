@@ -177,6 +177,30 @@ public class KeycloakAdminService {
     }
 
     /**
+     * Tìm Keycloak user ID theo username hoặc email
+     */
+    public String findUserIdByUsernameOrEmail(String username, String email) {
+        try {
+            UsersResource usersResource = getUsersResource();
+            if (username != null && !username.isBlank()) {
+                List<UserRepresentation> list = usersResource.searchByUsername(username, true);
+                if (list != null && !list.isEmpty()) {
+                    return list.get(0).getId();
+                }
+            }
+            if (email != null && !email.isBlank()) {
+                List<UserRepresentation> list = usersResource.searchByEmail(email, true);
+                if (list != null && !list.isEmpty()) {
+                    return list.get(0).getId();
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("Could not find user on Keycloak by username/email: {}", ex.getMessage());
+        }
+        return null;
+    }
+
+    /**
      * Xóa user trên Keycloak
      */
     public void deleteUser(String keycloakId) {

@@ -19,6 +19,8 @@ public enum ErrorCode {
     PERMISSION_NOT_FOUND("Không tìm thấy quyền", HttpStatus.NOT_FOUND),
     PERMISSION_EXISTED("Mã quyền đã tồn tại", HttpStatus.CONFLICT),
     CANNOT_DELETE_SYSTEM_ROLE("Không thể xóa vai trò hệ thống", HttpStatus.BAD_REQUEST),
+    INVALID_REQUEST("Yêu cầu không hợp lệ", HttpStatus.BAD_REQUEST),
+    INTERNAL_SERVER_ERROR("Lỗi hệ thống nội bộ", HttpStatus.INTERNAL_SERVER_ERROR),
     TOKEN_EXPIRED("Token đã hết hạn", HttpStatus.UNAUTHORIZED),
     TOKEN_INVALID("Token không hợp lệ", HttpStatus.UNAUTHORIZED),
     KEYCLOAK_ERROR("Lỗi tương tác với Identity Server Keycloak", HttpStatus.BAD_GATEWAY);

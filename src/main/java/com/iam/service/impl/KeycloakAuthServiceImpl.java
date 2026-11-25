@@ -33,6 +33,8 @@ public class KeycloakAuthServiceImpl implements AuthService {
     private final KeycloakAdminService keycloakAdminService;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final com.iam.repository.PasswordResetTokenRepository passwordResetTokenRepository;
+    private final com.iam.service.EmailService emailService;
 
     @Override
     public LoginResponse login(LoginRequest request) {
@@ -47,6 +49,32 @@ public class KeycloakAuthServiceImpl implements AuthService {
             // Tìm thông tin User trong DB nội bộ của IAM
             Optional<User> userOpt = userRepository.findByUsername(target)
                     .or(() -> userRepository.findByEmail(target));
+
+            if (userOpt.isPresent() && userOpt.get().isTwoFactorEnabled()) {
+                User u = userOpt.get();
+                String otp = String.format("%06d", new java.util.Random().nextInt(1000000));
+                String tokenStr = "2FA_LOGIN:" + u.getId() + ":" + otp;
+                com.iam.entity.PasswordResetToken token = com.iam.entity.PasswordResetToken.builder()
+                        .userId(u.getId())
+                        .token(tokenStr)
+                        .expiresAt(java.time.LocalDateTime.now().plusMinutes(5))
+                        .used(false)
+                        .build();
+                passwordResetTokenRepository.save(token);
+
+                emailService.sendOtpEmail(
+                        u.getEmail(),
+                        otp,
+                        "Mã OTP Đăng Nhập (2FA) - IAM Verse",
+                        "Xác Thực Đăng Nhập 2FA",
+                        "Tài khoản của bạn đã kích hoạt bảo vệ 2FA. Vui lòng nhập mã OTP để hoàn tất đăng nhập."
+                );
+
+                return LoginResponse.builder()
+                        .requires2fa(true)
+                        .message("Tài khoản đã kích hoạt 2FA. Mã OTP đã được gửi đến email " + u.getEmail())
+                        .build();
+            }
 
             Map<String, Object> userProfile = new HashMap<>();
             if (userOpt.isPresent()) {

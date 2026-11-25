@@ -57,6 +57,10 @@ public class User extends BaseEntity {
     @Builder.Default
     private boolean enabled = true;
 
+    @Column(name = "two_factor_enabled", nullable = false)
+    @Builder.Default
+    private boolean twoFactorEnabled = false;
+
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
 

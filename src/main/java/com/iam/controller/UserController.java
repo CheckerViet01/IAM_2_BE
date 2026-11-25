@@ -23,6 +23,12 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,18 +43,42 @@ public class UserController {
 
     private final UserService userService;
     private final UserRepository userRepository;
+    private final com.iam.repository.AvatarRepository avatarRepository;
+    private final com.iam.repository.PasswordResetTokenRepository passwordResetTokenRepository;
+    private final com.iam.service.EmailService emailService;
+    private final org.springframework.security.crypto.password.PasswordEncoder passwordEncoder;
+    private final com.iam.service.KeycloakAdminService keycloakAdminService;
 
-    @GetMapping("/profile")
-    @Operation(summary = "Lấy thông tin tài khoản đang đăng nhập")
-    public ApiResponse<Map<String, Object>> getProfile(Authentication authentication) {
+    private User resolveUser(Authentication authentication) {
         if (authentication == null) {
             throw new AppException(ErrorCode.UNAUTHENTICATED);
         }
         String principal = authentication.getName();
-        User user = userRepository.findByUsername(principal)
+        String username = null;
+        String email = null;
+        if (authentication.getPrincipal() instanceof org.springframework.security.oauth2.jwt.Jwt jwt) {
+            if (jwt.hasClaim("preferred_username")) {
+                username = jwt.getClaimAsString("preferred_username");
+            }
+            if (jwt.hasClaim("email")) {
+                email = jwt.getClaimAsString("email");
+            }
+        }
+        final String uName = username;
+        final String uEmail = email;
+
+        return userRepository.findByUsername(principal)
                 .or(() -> userRepository.findByEmail(principal))
                 .or(() -> userRepository.findByKeycloakId(principal))
+                .or(() -> uName != null ? userRepository.findByUsername(uName) : java.util.Optional.empty())
+                .or(() -> uEmail != null ? userRepository.findByEmail(uEmail) : java.util.Optional.empty())
                 .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+    }
+
+    @GetMapping("/profile")
+    @Operation(summary = "Lấy thông tin tài khoản đang đăng nhập")
+    public ApiResponse<Map<String, Object>> getProfile(Authentication authentication) {
+        User user = resolveUser(authentication);
 
         Map<String, Object> profile = new HashMap<>();
         profile.put("id", user.getId());
@@ -61,6 +91,8 @@ public class UserController {
         profile.put("isActive", user.isEnabled() && !user.isDeleted());
         profile.put("isLocked", user.isLocked());
         profile.put("deleted", user.isDeleted());
+        profile.put("twoFactorEnabled", user.isTwoFactorEnabled());
+        profile.put("twoFactorMethod", "EMAIL");
         profile.put("createdAt", user.getCreatedAt());
 
         List<String> roleCodes = user.getRoles() != null
@@ -176,7 +208,8 @@ public class UserController {
     public ApiResponse<Void> changePassword(
             Authentication authentication,
             @Valid @RequestBody ChangePasswordRequest request) {
-        userService.changePassword(authentication.getName(), request);
+        User user = resolveUser(authentication);
+        userService.changePassword(user.getUsername(), request);
         return ApiResponse.ok("Đổi mật khẩu thành công", null);
     }
 
@@ -185,14 +218,7 @@ public class UserController {
     public ApiResponse<Map<String, Object>> updateProfile(
             Authentication authentication,
             @RequestBody Map<String, Object> body) {
-        if (authentication == null) {
-            throw new AppException(ErrorCode.UNAUTHENTICATED);
-        }
-        String principal = authentication.getName();
-        User user = userRepository.findByUsername(principal)
-                .or(() -> userRepository.findByEmail(principal))
-                .or(() -> userRepository.findByKeycloakId(principal))
-                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+        User user = resolveUser(authentication);
 
         if (body.containsKey("fullName") && body.get("fullName") != null) {
             user.setFullName(body.get("fullName").toString().trim());
@@ -207,47 +233,173 @@ public class UserController {
 
     @PostMapping("/avatar")
     @Operation(summary = "Tải lên ảnh đại diện")
+    @org.springframework.transaction.annotation.Transactional
     public ApiResponse<Map<String, Object>> uploadAvatar(
             Authentication authentication,
-            @RequestParam(value = "file", required = false) org.springframework.web.multipart.MultipartFile file) {
-        if (authentication == null) {
-            throw new AppException(ErrorCode.UNAUTHENTICATED);
+            @RequestParam(value = "file", required = true) org.springframework.web.multipart.MultipartFile file) {
+        if (file == null || file.isEmpty()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Tệp ảnh không hợp lệ hoặc rỗng");
         }
-        String principal = authentication.getName();
-        User user = userRepository.findByUsername(principal)
-                .or(() -> userRepository.findByEmail(principal))
-                .or(() -> userRepository.findByKeycloakId(principal))
-                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+        User user = resolveUser(authentication);
 
-        String avatarUrl = "https://api.dicebear.com/7.x/bottts/svg?seed=" + user.getUsername();
-        user.setAvatarUrl(avatarUrl);
-        userRepository.save(user);
+        try {
+            Path uploadDir = Paths.get("uploads", "avatars");
+            if (!Files.exists(uploadDir)) {
+                Files.createDirectories(uploadDir);
+            }
 
-        return ApiResponse.ok("Tải ảnh đại diện thành công", Map.of("avatarUrl", avatarUrl));
+            String originalName = file.getOriginalFilename() != null ? file.getOriginalFilename() : "avatar.png";
+            String cleanName = originalName.replaceAll("[^a-zA-Z0-9.-]", "_");
+            String storedFileName = "u" + user.getId() + "_" + System.currentTimeMillis() + "_" + cleanName;
+            Path targetPath = uploadDir.resolve(storedFileName);
+
+            Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+            String avatarUrl = "/uploads/avatars/" + storedFileName;
+
+            // Đặt các avatar cũ thành current = false
+            avatarRepository.resetCurrentAvatars(user.getId());
+
+            // Lưu avatar mới vào bảng avatars
+            com.iam.entity.Avatar avatar = com.iam.entity.Avatar.builder()
+                    .userId(user.getId())
+                    .fileName(storedFileName)
+                    .originalFileName(originalName)
+                    .fileUrl(avatarUrl)
+                    .fileSizeBytes(file.getSize())
+                    .current(true)
+                    .uploadedAt(LocalDateTime.now())
+                    .deleted(false)
+                    .build();
+            avatarRepository.save(avatar);
+
+            // Cập nhật URL vào user
+            user.setAvatarUrl(avatarUrl);
+            userRepository.save(user);
+
+            return ApiResponse.ok("Tải ảnh đại diện thành công", Map.of("avatarUrl", avatarUrl));
+        } catch (IOException e) {
+            throw new AppException(ErrorCode.INTERNAL_SERVER_ERROR, "Lỗi khi lưu tệp ảnh: " + e.getMessage());
+        }
     }
 
     @GetMapping("/avatars")
     @Operation(summary = "Lấy danh sách lịch sử avatar")
     public ApiResponse<List<Map<String, Object>>> getAvatars(Authentication authentication) {
-        return ApiResponse.ok(List.of());
+        User user = resolveUser(authentication);
+
+        List<com.iam.entity.Avatar> avatars = avatarRepository.findByUserIdAndDeletedFalseOrderByUploadedAtDesc(user.getId());
+        List<Map<String, Object>> result = avatars.stream().map(av -> {
+            Map<String, Object> item = new HashMap<>();
+            item.put("id", av.getId());
+            item.put("fileName", av.getFileName());
+            item.put("originalFileName", av.getOriginalFileName());
+            item.put("fileUrl", av.getFileUrl());
+            item.put("fileSizeBytes", av.getFileSizeBytes());
+            item.put("isCurrent", av.isCurrent());
+            item.put("uploadedAt", av.getUploadedAt());
+            return item;
+        }).collect(Collectors.toList());
+
+        return ApiResponse.ok(result);
     }
 
     @PostMapping("/2fa/request-enable")
     @Operation(summary = "Yêu cầu kích hoạt 2FA")
-    public ApiResponse<String> requestEnable2fa() {
-        return ApiResponse.ok("Mã xác thực 2FA đã gửi qua email (Mã mẫu: 123456)", "123456");
+    @org.springframework.transaction.annotation.Transactional
+    public ApiResponse<String> requestEnable2fa(Authentication authentication) {
+        User user = resolveUser(authentication);
+
+        String otp = String.format("%06d", new java.util.Random().nextInt(1000000));
+        String tokenStr = "2FA_ENABLE:" + user.getId() + ":" + otp;
+
+        com.iam.entity.PasswordResetToken token = com.iam.entity.PasswordResetToken.builder()
+                .userId(user.getId())
+                .token(tokenStr)
+                .expiresAt(LocalDateTime.now().plusMinutes(5))
+                .used(false)
+                .build();
+        passwordResetTokenRepository.save(token);
+
+        emailService.sendOtpEmail(
+                user.getEmail(),
+                otp,
+                "Mã OTP Kích Hoạt Bảo Mật 2FA - IAM Verse",
+                "Kích Hoạt Bảo Vệ 2 Bước (2FA)",
+                "Bạn đang yêu cầu kích hoạt lá chắn bảo mật xác thực 2 bước (2FA) qua Email cho tài khoản <strong>" + user.getEmail() + "</strong>."
+        );
+
+        return ApiResponse.ok("Mã OTP kích hoạt 2FA đã được gửi về email " + user.getEmail(), otp);
     }
 
     @PostMapping("/2fa/confirm-enable")
     @Operation(summary = "Xác nhận kích hoạt 2FA")
-    public ApiResponse<String> confirmEnable2fa(@RequestBody Map<String, Object> body) {
-        return ApiResponse.ok("Kích hoạt 2FA thành công", "SUCCESS");
+    @org.springframework.transaction.annotation.Transactional
+    public ApiResponse<String> confirmEnable2fa(Authentication authentication, @RequestBody Map<String, Object> body) {
+        String otpCode = body != null ? (String) body.get("otpCode") : null;
+        if (otpCode == null || otpCode.trim().length() != 6) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Mã OTP phải gồm 6 chữ số");
+        }
+
+        User user = resolveUser(authentication);
+
+        String expectedToken = "2FA_ENABLE:" + user.getId() + ":" + otpCode.trim();
+        com.iam.entity.PasswordResetToken token = passwordResetTokenRepository.findByTokenAndUsedFalse(expectedToken)
+                .orElseThrow(() -> new AppException(ErrorCode.INVALID_REQUEST, "Mã OTP không chính xác hoặc đã hết hạn!"));
+
+        if (token.getExpiresAt().isBefore(LocalDateTime.now())) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Mã OTP đã hết hạn, vui lòng yêu cầu mã mới!");
+        }
+
+        token.setUsed(true);
+        passwordResetTokenRepository.save(token);
+
+        user.setTwoFactorEnabled(true);
+        userRepository.save(user);
+
+        return ApiResponse.ok("Kích hoạt 2FA thành công! Lá chắn bảo vệ đã được bật 🛡️", "SUCCESS");
     }
 
     @PostMapping("/2fa/disable")
     @Operation(summary = "Tắt 2FA")
-    public ApiResponse<String> disable2fa(@RequestBody Map<String, Object> body) {
-        return ApiResponse.ok("Tắt 2FA thành công", "SUCCESS");
+    @org.springframework.transaction.annotation.Transactional
+    public ApiResponse<String> disable2fa(Authentication authentication, @RequestBody Map<String, Object> body) {
+        String password = body != null ? (String) body.get("password") : null;
+        if (password == null || password.isBlank()) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Vui lòng nhập mật khẩu xác nhận");
+        }
+
+        User user = resolveUser(authentication);
+
+        boolean authenticated = false;
+        if (user.getPasswordHash() != null && !user.getPasswordHash().isBlank()) {
+            if (passwordEncoder.matches(password, user.getPasswordHash())) {
+                authenticated = true;
+            }
+        }
+        if (!authenticated) {
+            try {
+                String loginIdentifier = user.getUsername() != null ? user.getUsername() : user.getEmail();
+                keycloakAdminService.loginDirect(loginIdentifier, password);
+                authenticated = true;
+            } catch (Exception ex) {
+                if (user.getEmail() != null && !user.getEmail().equalsIgnoreCase(user.getUsername())) {
+                    try {
+                        keycloakAdminService.loginDirect(user.getEmail(), password);
+                        authenticated = true;
+                    } catch (Exception ignored) {}
+                }
+            }
+        }
+
+        if (!authenticated) {
+            throw new AppException(ErrorCode.INVALID_CREDENTIALS, "Mật khẩu xác nhận không chính xác!");
+        }
+
+        user.setTwoFactorEnabled(false);
+        userRepository.save(user);
+
+        return ApiResponse.ok("Đã tắt bảo vệ 2FA thành công.", "SUCCESS");
     }
 
     @GetMapping("/activity-logs")

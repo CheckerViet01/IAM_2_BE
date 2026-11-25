@@ -32,6 +32,9 @@ build/
 logs/
 *.log
 
+### Uploads ###
+uploads/
+
 ### OS ###
 .DS_Store
 Thumbs.db

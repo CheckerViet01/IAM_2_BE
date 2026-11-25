@@ -45,6 +45,8 @@ public class SelfAuthServiceImpl implements AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
     private final AuthenticationManager authenticationManager;
+    private final com.iam.repository.PasswordResetTokenRepository passwordResetTokenRepository;
+    private final com.iam.service.EmailService emailService;
 
     @Override
     @Transactional
@@ -68,6 +70,31 @@ public class SelfAuthServiceImpl implements AuthService {
         // Cập nhật lastLoginAt
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
+
+        if (user.isTwoFactorEnabled()) {
+            String otp = String.format("%06d", new java.util.Random().nextInt(1000000));
+            String tokenStr = "2FA_LOGIN:" + user.getId() + ":" + otp;
+            com.iam.entity.PasswordResetToken token = com.iam.entity.PasswordResetToken.builder()
+                    .userId(user.getId())
+                    .token(tokenStr)
+                    .expiresAt(LocalDateTime.now().plusMinutes(5))
+                    .used(false)
+                    .build();
+            passwordResetTokenRepository.save(token);
+
+            emailService.sendOtpEmail(
+                    user.getEmail(),
+                    otp,
+                    "Mã OTP Đăng Nhập (2FA) - IAM Verse",
+                    "Xác Thực Đăng Nhập 2FA",
+                    "Tài khoản của bạn đã kích hoạt bảo vệ 2FA. Vui lòng nhập mã OTP để hoàn tất đăng nhập."
+            );
+
+            return LoginResponse.builder()
+                    .requires2fa(true)
+                    .message("Tài khoản đã kích hoạt 2FA. Mã OTP đã được gửi đến email " + user.getEmail())
+                    .build();
+        }
 
         // Sinh Access Token và Refresh Token nội bộ
         String accessToken = jwtTokenProvider.generateAccessToken(authentication);
