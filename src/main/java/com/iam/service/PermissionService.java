@@ -34,15 +34,16 @@ public class PermissionService {
 
     @Transactional
     public PermissionResponse createPermission(PermissionRequest request) {
-        if (permissionRepository.existsByCode(request.getCode())) {
+        String code = request.getEffectiveCode();
+        if (permissionRepository.existsByCode(code)) {
             throw new AppException(ErrorCode.PERMISSION_EXISTED);
         }
 
         Permission permission = Permission.builder()
-                .code(request.getCode().trim().toUpperCase())
+                .code(code)
                 .name(request.getName().trim())
-                .resource(request.getResource().trim().toUpperCase())
-                .action(request.getAction().trim().toUpperCase())
+                .resource(request.getEffectiveResource())
+                .action(request.getEffectiveAction())
                 .description(request.getDescription())
                 .build();
 

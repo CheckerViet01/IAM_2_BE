@@ -1,5 +1,6 @@
 package com.iam.dto.response;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.*;
 
 import java.time.LocalDateTime;
@@ -28,4 +29,14 @@ public class UserResponse {
     private String createdBy;
     private LocalDateTime updatedAt;
     private String updatedBy;
+
+    @JsonProperty("isLocked")
+    public boolean getIsLocked() {
+        return locked;
+    }
+
+    @JsonProperty("isActive")
+    public boolean getIsActive() {
+        return enabled;
+    }
 }

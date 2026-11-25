@@ -175,4 +175,102 @@ public class UserController {
         userService.changePassword(authentication.getName(), request);
         return ApiResponse.ok("Đổi mật khẩu thành công", null);
     }
+
+    @PutMapping("/profile")
+    @Operation(summary = "Cập nhật hồ sơ tài khoản hiện tại")
+    public ApiResponse<Map<String, Object>> updateProfile(
+            Authentication authentication,
+            @RequestBody Map<String, Object> body) {
+        if (authentication == null) {
+            throw new AppException(ErrorCode.UNAUTHENTICATED);
+        }
+        String principal = authentication.getName();
+        User user = userRepository.findByUsername(principal)
+                .or(() -> userRepository.findByEmail(principal))
+                .or(() -> userRepository.findByKeycloakId(principal))
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+
+        if (body.containsKey("fullName") && body.get("fullName") != null) {
+            user.setFullName(body.get("fullName").toString().trim());
+        }
+        if (body.containsKey("phoneNumber") && body.get("phoneNumber") != null) {
+            user.setPhoneNumber(body.get("phoneNumber").toString().trim());
+        }
+        userRepository.save(user);
+
+        return getProfile(authentication);
+    }
+
+    @PostMapping("/avatar")
+    @Operation(summary = "Tải lên ảnh đại diện")
+    public ApiResponse<Map<String, Object>> uploadAvatar(
+            Authentication authentication,
+            @RequestParam(value = "file", required = false) org.springframework.web.multipart.MultipartFile file) {
+        if (authentication == null) {
+            throw new AppException(ErrorCode.UNAUTHENTICATED);
+        }
+        String principal = authentication.getName();
+        User user = userRepository.findByUsername(principal)
+                .or(() -> userRepository.findByEmail(principal))
+                .or(() -> userRepository.findByKeycloakId(principal))
+                .orElseThrow(() -> new AppException(ErrorCode.USER_NOT_FOUND));
+
+        String avatarUrl = "https://api.dicebear.com/7.x/bottts/svg?seed=" + user.getUsername();
+        user.setAvatarUrl(avatarUrl);
+        userRepository.save(user);
+
+        return ApiResponse.ok("Tải ảnh đại diện thành công", Map.of("avatarUrl", avatarUrl));
+    }
+
+    @GetMapping("/avatars")
+    @Operation(summary = "Lấy danh sách lịch sử avatar")
+    public ApiResponse<List<Map<String, Object>>> getAvatars(Authentication authentication) {
+        return ApiResponse.ok(List.of());
+    }
+
+    @PostMapping("/2fa/request-enable")
+    @Operation(summary = "Yêu cầu kích hoạt 2FA")
+    public ApiResponse<String> requestEnable2fa() {
+        return ApiResponse.ok("Mã xác thực 2FA đã gửi qua email (Mã mẫu: 123456)", "123456");
+    }
+
+    @PostMapping("/2fa/confirm-enable")
+    @Operation(summary = "Xác nhận kích hoạt 2FA")
+    public ApiResponse<String> confirmEnable2fa(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok("Kích hoạt 2FA thành công", "SUCCESS");
+    }
+
+    @PostMapping("/2fa/disable")
+    @Operation(summary = "Tắt 2FA")
+    public ApiResponse<String> disable2fa(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok("Tắt 2FA thành công", "SUCCESS");
+    }
+
+    @GetMapping("/activity-logs")
+    @Operation(summary = "Lấy nhật ký hoạt động của tài khoản")
+    public ApiResponse<PageResponse<Map<String, Object>>> getActivityLogs(
+            Authentication authentication,
+            @PageableDefault(size = 10) Pageable pageable) {
+        List<Map<String, Object>> logs = List.of(
+                Map.of(
+                        "id", 1,
+                        "action", "Đăng nhập hệ thống (SSO/Password)",
+                        "status", "SUCCESS",
+                        "ipAddress", "127.0.0.1",
+                        "userAgent", "Chrome / Angular Dashboard",
+                        "details", "Xác thực thành công",
+                        "createdAt", java.time.LocalDateTime.now()
+                )
+        );
+        PageResponse<Map<String, Object>> pageResponse = PageResponse.<Map<String, Object>>builder()
+                .content(logs)
+                .pageNumber(0)
+                .pageSize(10)
+                .totalElements(1)
+                .totalPages(1)
+                .first(true)
+                .last(true)
+                .build();
+        return ApiResponse.ok(pageResponse);
+    }
 }

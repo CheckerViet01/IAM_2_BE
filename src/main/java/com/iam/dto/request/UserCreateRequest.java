@@ -14,8 +14,6 @@ import java.util.Set;
 @Builder
 public class UserCreateRequest {
 
-    @NotBlank(message = "Tên đăng nhập không được để trống")
-    @Size(min = 3, max = 50, message = "Tên đăng nhập từ 3 đến 50 ký tự")
     private String username;
 
     @NotBlank(message = "Email không được để trống")
@@ -31,4 +29,16 @@ public class UserCreateRequest {
     private String phoneNumber;
 
     private Set<String> roleCodes;
+
+    private Set<String> roles;
+
+    public String getEffectiveUsername() {
+        return (username != null && !username.isBlank()) ? username.trim() : (email != null ? email.trim() : "");
+    }
+
+    public Set<String> getEffectiveRoleCodes() {
+        if (roleCodes != null && !roleCodes.isEmpty()) return roleCodes;
+        if (roles != null && !roles.isEmpty()) return roles;
+        return Set.of();
+    }
 }

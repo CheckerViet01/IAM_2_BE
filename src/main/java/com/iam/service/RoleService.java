@@ -44,12 +44,13 @@ public class RoleService {
 
     @Transactional
     public RoleResponse createRole(RoleRequest request) {
-        if (roleRepository.existsByCode(request.getCode())) {
+        String code = request.getEffectiveCode();
+        if (roleRepository.existsByCode(code)) {
             throw new AppException(ErrorCode.ROLE_EXISTED);
         }
 
         Role role = Role.builder()
-                .code(request.getCode().trim().toUpperCase())
+                .code(code)
                 .name(request.getName().trim())
                 .description(request.getDescription())
                 .system(false)

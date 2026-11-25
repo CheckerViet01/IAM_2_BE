@@ -51,7 +51,8 @@ public class UserService {
 
     @Transactional
     public UserResponse createUser(UserCreateRequest request) {
-        if (userRepository.existsByUsername(request.getUsername()) || userRepository.existsByEmail(request.getEmail())) {
+        String effectiveUsername = request.getEffectiveUsername();
+        if (userRepository.existsByUsername(effectiveUsername) || userRepository.existsByEmail(request.getEmail())) {
             throw new AppException(ErrorCode.USER_EXISTED);
         }
 
@@ -61,7 +62,7 @@ public class UserService {
         // Nếu bật chế độ Keycloak: Tạo tài khoản trên Keycloak trước để đồng bộ
         if ("keycloak".equalsIgnoreCase(idpProvider)) {
             keycloakId = keycloakAdminService.createUser(
-                    request.getUsername().trim(),
+                    effectiveUsername,
                     request.getEmail().trim(),
                     request.getPassword(),
                     request.getFullName()
@@ -71,15 +72,20 @@ public class UserService {
 
         // Lấy danh sách Roles
         Set<Role> roles = new HashSet<>();
-        if (request.getRoleCodes() != null && !request.getRoleCodes().isEmpty()) {
-            List<Role> roleList = roleRepository.findByCodeIn(request.getRoleCodes());
+        Set<String> inputRoles = request.getEffectiveRoleCodes();
+        if (inputRoles != null && !inputRoles.isEmpty()) {
+            Set<String> normalized = new HashSet<>(inputRoles);
+            if (inputRoles.contains("ROLE_USER")) normalized.add("USER");
+            if (inputRoles.contains("USER")) normalized.add("ROLE_USER");
+            List<Role> roleList = roleRepository.findByCodeIn(normalized);
             roles.addAll(roleList);
-        } else {
+        }
+        if (roles.isEmpty()) {
             roleRepository.findByCode("USER").ifPresent(roles::add);
         }
 
         User user = User.builder()
-                .username(request.getUsername().trim())
+                .username(effectiveUsername)
                 .email(request.getEmail().trim())
                 .passwordHash(request.getPassword() != null ? passwordEncoder.encode(request.getPassword()) : null)
                 .fullName(request.getFullName())
