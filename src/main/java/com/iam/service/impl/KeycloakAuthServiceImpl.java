@@ -35,6 +35,7 @@ public class KeycloakAuthServiceImpl implements AuthService {
     private final RoleRepository roleRepository;
     private final com.iam.repository.PasswordResetTokenRepository passwordResetTokenRepository;
     private final com.iam.service.EmailService emailService;
+    private final com.iam.service.TwoFactorSessionManager twoFactorSessionManager;
 
     @Override
     public LoginResponse login(LoginRequest request) {
@@ -61,6 +62,7 @@ public class KeycloakAuthServiceImpl implements AuthService {
                         .used(false)
                         .build();
                 passwordResetTokenRepository.save(token);
+                twoFactorSessionManager.storeSession(tokenStr, tokenResponse, 5);
 
                 emailService.sendOtpEmail(
                         u.getEmail(),

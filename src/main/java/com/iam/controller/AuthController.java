@@ -32,6 +32,7 @@ import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @RestController
@@ -48,6 +49,7 @@ public class AuthController {
     private final EmailService emailService;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider jwtTokenProvider;
+    private final com.iam.service.TwoFactorSessionManager twoFactorSessionManager;
 
     @Value("${app.idp.provider:keycloak}")
     private String idpProvider;
@@ -210,29 +212,52 @@ public class AuthController {
         token.setUsed(true);
         passwordResetTokenRepository.save(token);
 
-        String authorities = user.getRoles() != null
-                ? user.getRoles().stream().map(Role::getCode).collect(Collectors.joining(","))
-                : "ROLE_USER";
-        String accessToken = jwtTokenProvider.generateAccessToken(user.getUsername(), authorities);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername());
+        com.iam.dto.response.TokenResponse kcTokens = twoFactorSessionManager.retrieveAndRemove(expectedToken);
+
+        String accessToken;
+        String refreshToken;
+        String tokenType = "Bearer";
+        Long expiresIn = 3600L;
+
+        if (kcTokens != null && kcTokens.getAccessToken() != null) {
+            accessToken = kcTokens.getAccessToken();
+            refreshToken = kcTokens.getRefreshToken();
+            if (kcTokens.getExpiresIn() != null) expiresIn = kcTokens.getExpiresIn();
+            if (kcTokens.getTokenType() != null) tokenType = kcTokens.getTokenType();
+        } else {
+            String authorities = user.getRoles() != null
+                    ? user.getRoles().stream().map(Role::getCode).collect(Collectors.joining(","))
+                    : "ROLE_USER";
+            accessToken = jwtTokenProvider.generateAccessToken(user.getUsername(), authorities);
+            refreshToken = jwtTokenProvider.generateRefreshToken(user.getUsername());
+        }
 
         Map<String, Object> userProfile = new HashMap<>();
         userProfile.put("id", user.getId());
         userProfile.put("username", user.getUsername());
         userProfile.put("email", user.getEmail());
         userProfile.put("fullName", user.getFullName() != null ? user.getFullName() : user.getUsername());
+        userProfile.put("avatarUrl", user.getAvatarUrl());
         userProfile.put("isActive", user.isEnabled() && !user.isDeleted());
         userProfile.put("isLocked", user.isLocked());
         userProfile.put("twoFactorEnabled", user.isTwoFactorEnabled());
         userProfile.put("twoFactorMethod", "EMAIL");
         userProfile.put("roles", user.getRoles() != null ? user.getRoles().stream().map(Role::getCode).collect(Collectors.toList()) : List.of("USER"));
 
+        Set<String> perms = user.getRoles() != null
+                ? user.getRoles().stream()
+                    .filter(r -> r.getPermissions() != null)
+                    .flatMap(r -> r.getPermissions().stream().map(com.iam.entity.Permission::getCode))
+                    .collect(Collectors.toSet())
+                : Set.of();
+        userProfile.put("permissions", perms);
+
         LoginResponse resp = LoginResponse.builder()
                 .message("Xác thực 2FA thành công!")
                 .accessToken(accessToken)
                 .refreshToken(refreshToken)
-                .tokenType("Bearer")
-                .expiresIn(3600L)
+                .tokenType(tokenType)
+                .expiresIn(expiresIn)
                 .username(user.getUsername())
                 .user(userProfile)
                 .build();

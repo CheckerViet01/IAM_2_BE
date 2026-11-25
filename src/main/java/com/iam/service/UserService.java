@@ -200,42 +200,37 @@ public class UserService {
 
         boolean authenticatedOldPassword = false;
 
-        // 1. Kiểm tra mật khẩu cũ qua DB nội bộ nếu có passwordHash
-        if (user.getPasswordHash() != null && !user.getPasswordHash().isBlank()) {
-            if (passwordEncoder.matches(request.getOldPassword(), user.getPasswordHash())) {
-                authenticatedOldPassword = true;
-            }
-        }
-
-        // 2. Nếu chưa xác thực được qua DB nội bộ, thử kiểm tra qua Keycloak Direct Access
-        if (!authenticatedOldPassword) {
+        // 1. Nếu là tài khoản Keycloak hoặc có Keycloak ID, ưu tiên xác thực mật khẩu cũ qua Keycloak
+        if ("KEYCLOAK".equalsIgnoreCase(user.getAuthProvider()) || (user.getKeycloakId() != null && !user.getKeycloakId().isBlank())) {
             try {
                 String loginIdentifier = user.getUsername() != null ? user.getUsername() : user.getEmail();
                 keycloakAdminService.loginDirect(loginIdentifier, request.getOldPassword());
                 authenticatedOldPassword = true;
             } catch (Exception ex) {
-                // Thử thêm với email nếu username không được
                 if (user.getEmail() != null && !user.getEmail().equalsIgnoreCase(user.getUsername())) {
                     try {
                         keycloakAdminService.loginDirect(user.getEmail(), request.getOldPassword());
                         authenticatedOldPassword = true;
-                    } catch (Exception ignored) {
-                        log.warn("Keycloak authentication failed during password change for user {}: {}", currentUsername, ex.getMessage());
-                    }
-                } else {
-                    log.warn("Keycloak authentication failed during password change for user {}: {}", currentUsername, ex.getMessage());
+                    } catch (Exception ignored) {}
                 }
             }
         }
 
-        if (!authenticatedOldPassword) {
-            throw new AppException(ErrorCode.INVALID_CREDENTIALS, "Mật khẩu cũ không chính xác!");
+        // 2. Nếu chưa xác thực qua Keycloak, thử xác thực qua DB nội bộ
+        if (!authenticatedOldPassword && user.getPasswordHash() != null && !user.getPasswordHash().isBlank()) {
+            if (passwordEncoder.matches(request.getOldPassword(), user.getPasswordHash())) {
+                authenticatedOldPassword = true;
+            }
         }
 
-        // Cập nhật mật khẩu mới vào DB nội bộ
+        if (!authenticatedOldPassword) {
+            throw new AppException(ErrorCode.INVALID_REQUEST, "Mật khẩu hiện tại không chính xác! Vui lòng nhập đúng mật khẩu hiện tại.");
+        }
+
+        // 3. Cập nhật mật khẩu mới vào DB nội bộ
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
 
-        // Đồng bộ mật khẩu mới lên Keycloak nếu có Keycloak ID hoặc tìm thấy trên Keycloak
+        // 4. Đồng bộ mật khẩu mới lên Keycloak
         String kId = user.getKeycloakId();
         if (kId == null || kId.isBlank()) {
             kId = keycloakAdminService.findUserIdByUsernameOrEmail(user.getUsername(), user.getEmail());
@@ -248,8 +243,10 @@ public class UserService {
         if (kId != null && !kId.isBlank()) {
             try {
                 keycloakAdminService.resetPassword(kId, request.getNewPassword());
+                log.info("Successfully synced new password to Keycloak for user '{}' (id={})", currentUsername, kId);
             } catch (Exception ex) {
-                log.warn("Failed to sync new password to Keycloak for user {}: {}", currentUsername, ex.getMessage());
+                log.error("Failed to sync new password to Keycloak for user {}: {}", currentUsername, ex.getMessage());
+                throw new AppException(ErrorCode.KEYCLOAK_ERROR, "Đổi mật khẩu thất bại do không thể đồng bộ lên Keycloak: " + ex.getMessage());
             }
         }
 
