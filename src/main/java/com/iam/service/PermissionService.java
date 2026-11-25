@@ -58,8 +58,8 @@ public class PermissionService {
                 .orElseThrow(() -> new AppException(ErrorCode.PERMISSION_NOT_FOUND));
 
         permission.setName(request.getName().trim());
-        permission.setResource(request.getResource().trim().toUpperCase());
-        permission.setAction(request.getAction().trim().toUpperCase());
+        permission.setResource(request.getEffectiveResource());
+        permission.setAction(request.getEffectiveAction());
         permission.setDescription(request.getDescription());
 
         Permission updated = permissionRepository.save(permission);
