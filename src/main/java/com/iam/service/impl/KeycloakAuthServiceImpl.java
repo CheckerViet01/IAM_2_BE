@@ -18,6 +18,7 @@ import com.iam.service.KeycloakAdminService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
+@Primary
 @ConditionalOnProperty(name = "app.idp.provider", havingValue = "keycloak", matchIfMissing = true)
 @RequiredArgsConstructor
 @Slf4j
