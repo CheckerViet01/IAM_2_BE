@@ -39,7 +39,7 @@ app:
     client-id: iam-frontend
     admin-client-id: iam-admin-client
     admin-client-secret: gRteLWut1BX6oVkBSmZexeV5wf6IwNMg8GaUFv94fpvragDBBTM04gmThFU29J5uDzGduVeHhs9keWAhrWABJX
-    login-page-url: http://localhost:8180/realms/iam-realm/protocol/openid-connect/auth?client_id=iam-frontend&response_type=token&redirect_uri=http://localhost:4200/&scope=openid%20profile%20email
+    login-page-url: http://localhost:8180/realms/iam-realm/protocol/openid-connect/auth?client_id=iam-frontend&response_type=token&redirect_uri=http://localhost:4200/&scope=openid%20profile%20email&prompt=login
   jwt:
     secret: 404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970
     expiration: 3600000        # 1 giờ (ms)
