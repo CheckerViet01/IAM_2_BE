@@ -10,12 +10,13 @@ import java.util.Optional;
 
 @Component
 public class SecurityAuditorAware implements AuditorAware<String> {
-
+    // Spring data jpa
     @Override
     public Optional<String> getCurrentAuditor() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
 
-        if (authentication == null || !authentication.isAuthenticated() || authentication instanceof AnonymousAuthenticationToken) {
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication instanceof AnonymousAuthenticationToken) {
             return Optional.of("SYSTEM");
         }
 
